@@ -150,6 +150,7 @@ main { min-width: 0; display: flex; flex-direction: column; gap: 22px; }
 .screen-top select { background: var(--screen-2); color: var(--screen-ink); border: 1px solid #2a3340; border-radius: 6px; padding: 4px 6px; font-size: 13px; }
 .screen-top .spacer { flex: 1; }
 .song-global { display: grid; gap: 8px; padding: 10px 14px; }
+.song-global[hidden] { display: none !important; }
 .song-global-copy { display: grid; gap: 2px; }
 .song-global-copy b { font-family: var(--font-display); font-size: 16px; }
 .song-global-copy span, .song-global .small { color: var(--muted); font-size: 13px; }
@@ -541,10 +542,10 @@ main { gap: 16px; }
 
   <main id="main">
     <section class="lesson-head" id="lessonHead"></section>
-    <section class="song-global card" id="songControls" aria-label="Song and recording selection">
+    <section class="song-global card" id="songControls" aria-label="Song and recording selection" hidden>
       <div class="song-global-copy">
         <b>Song / recording for practice</b>
-        <span>Choose the song used in the Mixing lesson, or play it instead of the lesson sound in Pink Noise, Lectern / Preacher and Quiet Speaker exercises. Your selection stays visible as you move between lessons.</span>
+        <span>Choose the song or recording for the Mixing lesson. Your choice is also used in the final Free Practice mixer.</span>
       </div>
       <div class="row song-global-row">
         <label for="songModeSel">Selected song</label>
@@ -4637,11 +4638,11 @@ LESSONS.splice(LESSONS.findIndex(l => l.id === "band") + 1, 0, {
     };
   },
   songPanel(have, hasUser) {
-    const msg = h("p", { class: "small", role: "status", text: "Use the Song / recording selector above this lesson. It is the same selector shown in Pink Noise, Lectern / Preacher and Quiet Speaker exercises." });
+    const msg = h("p", { class: "small", role: "status", text: "The song selected above is loaded into this Mixing lesson and is also used in the final Free Practice mixer." });
     this.songMsg = msg;
     const box = h("div", { class: "card", style: "max-width:78ch" },
       h("h3", { text: "Song selection" }),
-      h("p", { html: "The selector stays available throughout the website. Choose <b>This Is Amazing Grace with or without congregation</b>, or load your own complete song file or separate stems. A complete stereo recording plays as one finished mix; separate stems can be balanced individually and the congregation can be switched off." }),
+      h("p", { html: "Choose <b>This Is Amazing Grace with or without congregation</b>, or load your own complete song file or separate stems using the selector above. A complete stereo recording plays as one finished mix; separate stems can be balanced individually and the congregation can be switched off. The same selection carries through to Free Practice at the end." }),
       msg);
     $("#lessonTop").append(box);
   },
@@ -4690,6 +4691,102 @@ LESSONS.splice(LESSONS.findIndex(l => l.id === "band") + 1, 0, {
   },
   unmount() { Qu.hook = null; AE.mixClear(); Qu.mode = "lesson"; Qu.stems = null; Qu.sets = {}; }
 });
+
+/* ================================================================== final open-ended mixer practice */
+LESSONS.push({
+  id: "practice", tape: "Free practice", title: "Free practice on the Qu-16",
+  lede: "No checklist and no tasks to complete. Use the whole training desk to experiment, listen and build your own mix.",
+  bench: true, desk: true, mode: "mix", target: "LR", noSource: true, resetDesk: true,
+  async mount() {
+    const self = this;
+    Bench.setup(quBands(), { analyzer: "post" });
+    const intro = h("div", { class: "card", style: "max-width:1000px" },
+      h("div", { class: "tape", text: "Open practice" }),
+      h("p", { html: "The desk is yours. Press <b>Play</b> when you are ready, then use the faders, Sel keys, preamp Gain, PEQ, PAFL, Mute, Mix sends and LR master as you would during a soundcheck. There are no ticks and no automatic resets while you stay on this page." }),
+      h("p", { class: "small", text: "This uses the song and congregation option selected in the Mixing module. If you have not visited Mixing, it uses the built-in This Is Amazing Grace practice stems." })
+    );
+    $("#lessonTop").append(intro);
+    $("#lessonBottom").append(
+      h("h2", { text: "Ideas to try" }),
+      h("ul", { class: "plain-list", html: "<li>Start with all channel faders down. Raise the lead vocal first, then bring the band up underneath.</li><li>Practise setting preamp gain with the channel fader down. Watch the channel meter and keep the red Pk light off.</li><li>Press a channel's PAFL key to listen in headphones, then press it again to return to the mix.</li><li>Press Mix 1 to practise a monitor mix, then press LR to return to the main mix.</li><li>Try a small EQ cut, compare it with EQ bypassed, and listen from the congregation's position.</li><li>Use Mute and SoftKeys to practise muting channels cleanly between songs and readings.</li>" }),
+      h("p", { class: "small", text: "Tip: press LR if you lose track of which mix the faders are showing. Keep the output volume low while experimenting." })
+    );
+
+    if (!AE.ready) {
+      $("#lessonTop").append(h("p", { class: "small", text: "This browser cannot play the training audio, but you can still explore the desk controls." }));
+      return;
+    }
+
+    const hasUser = await Song.hasUser();
+    const useUser = Song.pref() === "user" && hasUser;
+    let built;
+    try {
+      // Use the same song choice made in Mixing, but do not show a second selector here.
+      built = await Song.build(AE.ctx, () => {}, useUser);
+    } catch (err) {
+      console.error(err);
+      if (cur === self) $("#lessonTop").append(h("p", { class: "small", role: "status", text: "The selected recording could not be loaded: " + String(err.message || err) + ". Return to Mixing and load the song again, or choose the built-in song." }));
+      return;
+    }
+    if (cur !== self) return;
+
+    let list = built.list || [];
+    if (!list.length) {
+      $("#lessonTop").append(h("p", { class: "small", role: "status", text: "There are no playable stems in the selected recording." }));
+      return;
+    }
+
+    if (built.full) {
+      const track = list[0];
+      AE.mixBuild(list);
+      const stems = { ST1: { trim: track.trim == null ? 1 : track.trim } };
+      Qu.mount({ mode: "mix", target: "LR", stems, groups: {}, faders: { LR: 0 }, gains: { ST1: 30 } });
+      Qu.up.ST1 = F_MIN;
+      Qu.layer = 1;
+      Qu.sets.ST1 = Bench.makeSet(quBands());
+      AE.mixEq("ST1", Qu.sets.ST1);
+      Qu.render();
+      Qu.applyAudio();
+      $("#lessonTop").append(h("p", { class: "small", text: "Your own recording is a finished stereo mix, so it appears on ST1 in the upper layer. You can practise the stereo input level, PAFL, EQ and LR output, but its individual instruments and voices cannot be mixed separately." }));
+      return;
+    }
+
+    if (Song.congregationPref() === "without") list = list.filter(track => !/^cong/i.test(track.id));
+    if (!list.length) {
+      $("#lessonTop").append(h("p", { class: "small", text: "No playable tracks remain in this version. Return to Mixing and choose the version with congregation, or reload the stems." }));
+      return;
+    }
+
+    // The congregation ambience remains part of the room simulation; all normal input stems
+    // are brought up on the desk as individual channels for open-ended practice.
+    AE.mixBuild(list);
+    const stems = {}, faders = { LR: 0 };
+    for (let i = 1; i <= 16; i++) faders[String(i)] = F_MIN;
+    const groups = { "3": 2, "4": 2, "5": 1, "6": 1, "7": 1, "8": 1 };
+    for (const track of list) {
+      stems[track.id] = { trim: track.trim == null ? 1 : track.trim };
+    }
+    Qu.mount({ mode: "mix", target: "LR", stems, groups, faders });
+    for (const id of Object.keys(stems)) {
+      if (!/^cong/i.test(id)) {
+        Qu.sets[id] = Bench.makeSet(quBands());
+        AE.mixEq(id, Qu.sets[id]);
+      }
+    }
+    Qu.render();
+    Qu.applyAudio();
+    const songName = useUser ? "your uploaded stems" : "This Is Amazing Grace practice stems";
+    $("#lessonTop").append(h("p", { class: "small", text: "Loaded " + songName + ". Input channels start with their faders down, so press Play and bring them up gradually. The congregation layer follows the with/without selection made in Mixing." }));
+  },
+  unmount() {
+    Qu.hook = null;
+    AE.mixClear();
+    Qu.mode = "lesson";
+    Qu.stems = null;
+    Qu.sets = {};
+  }
+});
+
 /* ================================================================== navigation, views, wiring */
 let cur = null;
 
@@ -4839,7 +4936,7 @@ async function refreshSongControls(message) {
       ? "Selected: your own stems without the congregation. The congregation layers are removed from playback." + detail
       : "Selected: your own song / stems with the congregation option." + detail + (canRemove ? " You can switch the crowd off above." : " This is a finished stereo file, so its congregation cannot be removed separately.");
   } else {
-    status.textContent = "Selected: " + (choice.endsWith("without") ? "This Is Amazing Grace without congregation." : "This Is Amazing Grace with congregation.") + " Mixing uses this version automatically. In other exercises, choose it in the Sound menu or press Use selected song here.";
+    status.textContent = "Selected: " + (choice.endsWith("without") ? "This Is Amazing Grace without congregation." : "This Is Amazing Grace with congregation.") + " This version is used in the Mixing lesson and final Free Practice mixer.";
   }
   return { hasUser, canRemove, choice };
 }
@@ -4916,6 +5013,8 @@ function show(id, keepAudio) {
   setEqIn(true);
   $("#lessonTop").textContent = ""; $("#lessonBottom").textContent = ""; $("#challenge").textContent = "";
   cur = L;
+  const songControls = $("#songControls");
+  if (songControls) songControls.hidden = L.id !== "mix";
   refreshSongControls();
   const idx = vis.indexOf(L);
   const lede = typeof L.lede === "object" ? byLevel(L.lede.b, L.lede.n, L.lede.i, L.lede.a) : L.lede;
